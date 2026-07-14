@@ -28,7 +28,7 @@ class GenerateLabReportDocumentJob implements ShouldQueue
         private readonly string $resultValue,
         private readonly string $resultStatus,
         private readonly ?string $remarks,
-        private readonly string $enteredByStaffId,
+        private readonly ?string $enteredByStaffId,
         private readonly string $createdAt,
     ) {}
 
