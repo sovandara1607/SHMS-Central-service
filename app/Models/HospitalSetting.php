@@ -5,9 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Single-row hospital-wide configuration, read from the shared Postgres
- * table owned by the Application Server (Database-final). Central Service
- * never migrates or writes this table — read-only here.
+ * Single-row hospital-wide configuration. Read/write here as part of the
+ * BFF migration (see /api/hospital-settings) — Database-final's Settings
+ * screen now goes through this API instead of querying Postgres directly.
+ * Still never migrates: the table itself stays owned by Database-final.
  */
 class HospitalSetting extends Model
 {
