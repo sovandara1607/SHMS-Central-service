@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreMedicalReportRequest;
-use App\Jobs\GenerateMedicalReportDocumentJob;
 use App\Models\MedicalRecord;
 use App\Models\MedicalReport;
 use Illuminate\Http\JsonResponse;
@@ -47,40 +46,7 @@ class MedicalReportsApiController extends Controller
             'generated_by' => $request->input('generated_by'),
         ]);
 
-        GenerateMedicalReportDocumentJob::dispatch($report->report_id);
-
         return response()->json($this->present($report->load('patient')), 201);
-    }
-
-    public function status(string $reportId): JsonResponse
-    {
-        $report = MedicalReport::find($reportId);
-
-        if (! $report) {
-            return response()->json(['message' => 'Medical report not found'], 404);
-        }
-
-        return response()->json([
-            'report_id' => $report->report_id,
-            'ready' => (bool) $report->report_file_path,
-            'report_file_path' => $report->report_file_path,
-        ]);
-    }
-
-    public function regenerate(string $reportId): JsonResponse
-    {
-        $report = MedicalReport::find($reportId);
-
-        if (! $report) {
-            return response()->json(['message' => 'Medical report not found'], 404);
-        }
-
-        (new GenerateMedicalReportDocumentJob($report->report_id))->handle();
-
-        return response()->json([
-            'report_id' => $report->report_id,
-            'report_file_path' => $report->refresh()->report_file_path,
-        ]);
     }
 
     private function present(MedicalReport $report): array
@@ -88,7 +54,7 @@ class MedicalReportsApiController extends Controller
         return [
             ...$report->only([
                 'report_id', 'patient_id', 'medical_record_id', 'report_type',
-                'report_content', 'generated_by', 'generated_at', 'report_file_path',
+                'report_content', 'generated_by', 'generated_at',
             ]),
             'patient_name' => $report->patient ? trim($report->patient->first_name . ' ' . $report->patient->last_name) : null,
         ];

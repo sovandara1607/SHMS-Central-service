@@ -50,8 +50,6 @@ Route::middleware('central-service.key')->group(function () {
     Route::post('medical-records/{id}/procedures', [MedicalProceduresApiController::class, 'store']);
     Route::post('medical-records/{id}/vital-signs', [VitalSignsApiController::class, 'storeForRecord']);
     Route::get('medical-reports', [MedicalReportsApiController::class, 'index']);
-    Route::get('medical-reports/{reportId}/status', [MedicalReportsApiController::class, 'status']);
-    Route::post('medical-reports/{reportId}/regenerate', [MedicalReportsApiController::class, 'regenerate']);
 
     Route::get('vital-signs', [VitalSignsApiController::class, 'index']);
     Route::post('vital-signs', [VitalSignsApiController::class, 'store']);
