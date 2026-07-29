@@ -5,6 +5,7 @@ namespace App\Jobs;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use MongoDB\Operation\FindOneAndUpdate;
 
 /**
  * Data Synchronization Engine: mirrors a medical_record create/adjustment
@@ -30,9 +31,24 @@ class SyncMedicalRecordVersionJob implements ShouldQueue
 
     public function handle(): void
     {
+        // $this->version was computed synchronously in Database-final via
+        // count()+1 *before* this job was even queued, so under concurrent
+        // adjustments to the same record it can race with another in-flight
+        // job computing the identical number — by the time either actually
+        // writes, the count they both read from is stale. An atomic
+        // increment on a per-record counter document, done here at the
+        // moment of the real write, can't collide regardless of how many
+        // workers process jobs for the same record at once.
+        $counter = DB::connection('mongodb')->getCollection('medical_record_version_counters')->findOneAndUpdate(
+            ['_id' => $this->medicalRecordId],
+            ['$inc' => ['seq' => 1]],
+            ['upsert' => true, 'returnDocument' => FindOneAndUpdate::RETURN_DOCUMENT_AFTER],
+        );
+        $version = is_array($counter) ? $counter['seq'] : $counter->seq;
+
         DB::connection('mongodb')->table('medical_record_versions')->insert([
             'medical_record_id' => $this->medicalRecordId,
-            'version'    => $this->version,
+            'version'    => $version,
             'type'       => $this->type,
             'reason'     => $this->reason,
             'snapshot'   => $this->snapshot,

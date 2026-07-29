@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreVitalSignRequest;
+use App\Models\MedicalRecord;
 use App\Models\VitalSign;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +33,34 @@ class VitalSignsApiController extends Controller
     public function store(StoreVitalSignRequest $request): JsonResponse
     {
         $vital = VitalSign::create($request->validated() + [
+            'recorded_by' => $request->input('recorded_by'),
+        ]);
+
+        return response()->json($vital, 201);
+    }
+
+    /**
+     * Vitals recorded from within a medical record's detail view. Like
+     * MedicalReportsApiController/MedicalProceduresApiController, patient_id
+     * is derived from the record itself rather than trusted from the
+     * client — the flat store() above trusts a client-supplied patient_id
+     * because there's no record to anchor to, but here nothing should be
+     * able to attach a vital sign to the wrong patient by tampering with
+     * the request.
+     */
+    public function storeForRecord(StoreVitalSignRequest $request, string $recordId): JsonResponse
+    {
+        $record = MedicalRecord::findOrFail($recordId);
+        $data = $request->validated();
+
+        $vital = VitalSign::create([
+            'patient_id' => $record->patient_id,
+            'medical_record_id' => $record->medical_record_id,
+            'temperature' => $data['temperature'] ?? null,
+            'blood_pressure' => $data['blood_pressure'] ?? null,
+            'heart_rate' => $data['heart_rate'] ?? null,
+            'height' => $data['height'] ?? null,
+            'weight' => $data['weight'] ?? null,
             'recorded_by' => $request->input('recorded_by'),
         ]);
 

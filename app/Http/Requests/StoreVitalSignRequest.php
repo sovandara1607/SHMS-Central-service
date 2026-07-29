@@ -16,6 +16,7 @@ class StoreVitalSignRequest extends FormRequest
     {
         return [
             'patient_id'     => 'required|exists:patient,patient_id',
+            'medical_record_id' => 'nullable|exists:medical_record,medical_record_id',
             'temperature'    => 'nullable|numeric',
             'blood_pressure' => 'nullable|string|max:20',
             'heart_rate'     => 'nullable|integer',

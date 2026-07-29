@@ -21,12 +21,21 @@ class PatientsApiController extends Controller
         $perPage = (int) $request->query('per_page', 20);
 
         $patients = Patient::query()
+            ->select('patient.*')
+            ->addSelect(['insurance_provider' => PatientInsurance::selectRaw('insurance_provider')
+                ->whereColumn('patient_id', 'patient.patient_id')
+                ->where('status', 'active')
+                ->orderByDesc('start_date')
+                ->limit(1),
+            ])
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . $q . '%';
-                $query->where('patient_id', 'ilike', $like)
-                    ->orWhereRaw("(first_name || ' ' || last_name) ilike ?", [$like])
-                    ->orWhere('phone_number', 'ilike', $like)
-                    ->orWhere('email', 'ilike', $like);
+                $query->where(function ($sub) use ($like) {
+                    $sub->where('patient_id', 'ilike', $like)
+                        ->orWhereRaw("(first_name || ' ' || last_name) ilike ?", [$like])
+                        ->orWhere('phone_number', 'ilike', $like)
+                        ->orWhere('email', 'ilike', $like);
+                });
             })
             ->when($status !== 'all', fn ($query) => $query->where('patient_status', $status))
             ->when($assignedDoctorId, function ($query) use ($assignedDoctorId) {
@@ -104,11 +113,16 @@ class PatientsApiController extends Controller
     }
 
     /**
-     * The patient row is never overwritten (same "original preserved" policy
-     * as medical_record) — submitted field values are appended to
-     * patient_adjustment as an audit trail instead. Insurance is the
-     * exception: it's a separate, period-based sub-resource, so it still
-     * applies normally.
+     * The patient's demographic/clinical-narrative fields are never
+     * overwritten (same "original preserved" policy as medical_record) —
+     * submitted values are appended to patient_adjustment as an audit trail
+     * instead. `patient_status` is the one exception: it drives live
+     * application state elsewhere (dashboard ICU/critical counts, status
+     * filters and badges throughout the app), the same way discharge()
+     * already updates it directly rather than just logging it — so it's
+     * applied to the row here too, for consistency with that. Insurance is
+     * also an exception: it's a separate, period-based sub-resource, so it
+     * still applies normally.
      */
     public function adjust(AdjustPatientRequest $request, string $patient): JsonResponse
     {
@@ -122,6 +136,10 @@ class PatientsApiController extends Controller
             'adjusted_by' => $request->input('adjusted_by'),
             'reason' => $data['reason'],
         ]);
+
+        if (! empty($data['patient_status'])) {
+            $model->update(['patient_status' => $data['patient_status']]);
+        }
 
         if ($insuranceData['insurance_provider'] ?? null) {
             $insurance = $model->insurance()->latest('start_date')->first() ?? new PatientInsurance(['patient_id' => $model->patient_id]);
@@ -137,6 +155,13 @@ class PatientsApiController extends Controller
     {
         $patient = Patient::findOrFail($id);
         $patient->update(['patient_status' => 'discharged']);
+
+        // A discharged patient shouldn't still show an active treating
+        // doctor/nurse — bed release is handled separately by the caller
+        // (releaseRoomForPatient), this closes out the other half of "who's
+        // currently responsible for this patient."
+        $patient->doctorAssignments()->where('status', 'active')->update(['status' => 'completed', 'ended_at' => now()]);
+        $patient->nurseAssignments()->where('status', 'active')->update(['status' => 'completed', 'ended_at' => now()]);
 
         return response()->json($this->present($patient->fresh(['insurance', 'doctorAssignments', 'nurseAssignments', 'adjustments.adjustedByStaff'])));
     }

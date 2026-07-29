@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\AdjustMedicalRecordRequest;
 use App\Http\Requests\StoreMedicalRecordRequest;
+use App\Models\Appointment;
 use App\Models\MedicalRecord;
 use App\Models\MedicalRecordAdjustment;
 use App\Models\VitalSign;
@@ -29,10 +30,12 @@ class MedicalRecordsApiController extends Controller
             ->leftJoin('staff as cb', 'cb.staff_id', '=', 'mr.created_by')
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . $q . '%';
-                $query->where('mr.medical_record_id', 'ilike', $like)
-                    ->orWhere('mr.patient_id', 'ilike', $like)
-                    ->orWhereRaw("(p.first_name||' '||p.last_name) ilike ?", [$like])
-                    ->orWhereRaw("(s.first_name||' '||s.last_name) ilike ?", [$like]);
+                $query->where(function ($sub) use ($like) {
+                    $sub->where('mr.medical_record_id', 'ilike', $like)
+                        ->orWhere('mr.patient_id', 'ilike', $like)
+                        ->orWhereRaw("(p.first_name||' '||p.last_name) ilike ?", [$like])
+                        ->orWhereRaw("(s.first_name||' '||s.last_name) ilike ?", [$like]);
+                });
             })
             ->when($doctorId, fn ($query) => $query->where('mr.doctor_id', $doctorId))
             ->when($patientId, fn ($query) => $query->where('mr.patient_id', $patientId))
@@ -59,6 +62,8 @@ class MedicalRecordsApiController extends Controller
             'adjustments' => fn ($q) => $q->orderByDesc('adjusted_at'),
             'prescriptions' => fn ($q) => $q->with('items.medicine')->orderByDesc('prescription_date'),
             'reports' => fn ($q) => $q->orderByDesc('generated_at'),
+            'procedures' => fn ($q) => $q->orderByDesc('procedure_date'),
+            'vitalSigns' => fn ($q) => $q->orderByDesc('recorded_at'),
         ])->findOrFail($medicalRecord);
 
         return response()->json($this->present($record));
@@ -82,8 +87,23 @@ class MedicalRecordsApiController extends Controller
             ]);
         }
 
+        // Documenting the visit completes the appointment — this runs
+        // alongside the separate manual "Mark as Completed" action, so the
+        // patient/doctor match is required: appointment_id is a loose,
+        // free-typed reference field (not constrained to the current
+        // patient's own appointments), and without this check a record for
+        // one patient could silently complete an unrelated appointment
+        // belonging to someone else just by referencing its ID.
+        if ($record->appointment_id) {
+            Appointment::where('appointment_id', $record->appointment_id)
+                ->where('patient_id', $record->patient_id)
+                ->where('doctor_id', $record->doctor_id)
+                ->where('status', 'scheduled')
+                ->update(['status' => 'completed']);
+        }
+
         return response()->json($this->present($record->load(
-            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports'
+            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
         )), 201);
     }
 
@@ -104,7 +124,7 @@ class MedicalRecordsApiController extends Controller
         ]);
 
         return response()->json($this->present($record->fresh(
-            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports'
+            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
         )));
     }
 
@@ -133,6 +153,14 @@ class MedicalRecordsApiController extends Controller
             'reports' => $record->reports->map(fn ($r) => $r->only([
                 'report_id', 'medical_record_id', 'patient_id', 'report_type',
                 'report_content', 'generated_by', 'generated_at',
+            ]))->values(),
+            'procedures' => $record->procedures->map(fn ($p) => $p->only([
+                'procedure_id', 'medical_record_id', 'patient_id', 'doctor_id',
+                'procedure_name', 'procedure_details', 'outcome', 'procedure_date',
+            ]))->values(),
+            'vital_signs' => $record->vitalSigns->map(fn ($v) => $v->only([
+                'vital_sign_id', 'medical_record_id', 'patient_id', 'temperature',
+                'blood_pressure', 'heart_rate', 'height', 'weight', 'recorded_by', 'recorded_at',
             ]))->values(),
         ];
     }

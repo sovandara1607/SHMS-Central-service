@@ -26,7 +26,8 @@ class BillingApiController extends Controller
             ->when($patientId, fn ($q) => $q->where('b.patient_id', $patientId))
             ->groupBy('b.bill_id', 'b.patient_id', 'b.appointment_id', 'b.generated_by', 'b.bill_date', 'b.total_amount', 'b.status', 'p.first_name', 'p.last_name')
             ->orderByDesc('b.bill_date')
-            ->selectRaw("b.*, (p.first_name||' '||p.last_name) as patient_name, COALESCE(SUM(pm.amount_paid), 0) as paid_amount")
+            ->selectRaw("b.*, (p.first_name||' '||p.last_name) as patient_name, COALESCE(SUM(pm.amount_paid), 0) as paid_amount,
+                         (SELECT COUNT(*) FROM bill_item WHERE bill_item.bill_id = b.bill_id) as item_count")
             ->paginate((int) $request->query('bills_per_page', 20), ['*'], 'bills_page', (int) $request->query('bills_page', 1));
 
         $payments = DB::table('payment as pm')
@@ -36,8 +37,16 @@ class BillingApiController extends Controller
             ->selectRaw("pm.*, (p.first_name||' '||p.last_name) as patient_name")
             ->paginate((int) $request->query('payments_per_page', 20), ['*'], 'payments_page', (int) $request->query('payments_page', 1));
 
+        $pendingAmount = (float) DB::table('bill as b')
+            ->leftJoin(DB::raw('(SELECT bill_id, SUM(amount_paid) as paid FROM payment GROUP BY bill_id) pm'), 'pm.bill_id', '=', 'b.bill_id')
+            ->whereIn('b.status', ['unpaid', 'partially_paid'])
+            ->selectRaw('COALESCE(SUM(b.total_amount - COALESCE(pm.paid, 0)), 0) as pending')
+            ->value('pending');
+
         $stats = [
             'total_amount'    => (float) Bill::sum('total_amount'),
+            'total_revenue'   => (float) Payment::sum('amount_paid'),
+            'pending_amount'  => $pendingAmount,
             'unpaid'          => Bill::where('status', 'unpaid')->count(),
             'partially_paid'  => Bill::where('status', 'partially_paid')->count(),
             'paid'            => Bill::where('status', 'paid')->count(),
@@ -87,6 +96,7 @@ class BillingApiController extends Controller
             'unit_price' => $data['unit_price'],
         ]);
         $bill->recomputeTotal();
+        $bill->recomputeStatus();
 
         return response()->json($this->present($bill->fresh(['items', 'payments', 'patient'])), 201);
     }
@@ -117,9 +127,7 @@ class BillingApiController extends Controller
             'transaction_reference' => $data['transaction_reference'] ?? null,
         ]);
 
-        $paid = $bill->paidAmount();
-        $bill->status = $paid >= (float) $bill->total_amount ? 'paid' : ($paid > 0 ? 'partially_paid' : 'unpaid');
-        $bill->save();
+        $bill->recomputeStatus();
 
         return response()->json($this->present($bill->fresh(['items', 'payments', 'patient'])));
     }

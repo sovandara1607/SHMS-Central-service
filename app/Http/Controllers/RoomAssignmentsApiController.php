@@ -8,6 +8,7 @@ use App\Models\Bed;
 use App\Models\Room;
 use App\Models\RoomAssignment;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /** Bed-level view + patient room/bed assignment, nested under Room & Bed Management. */
@@ -26,6 +27,68 @@ class RoomAssignmentsApiController extends Controller
             'room' => $ra->room?->only(['room_id', 'room_number', 'room_type']),
             'bed' => $ra->bed?->only(['bed_id', 'bed_number']),
         ])->values());
+    }
+
+    /** Backs the "Beds" tab on the Room & Bed Management page — all beds, across all rooms. */
+    public function allBeds(Request $request): JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+        $status = $request->query('status');
+
+        $beds = DB::table('bed as b')
+            ->join('room as r', 'r.room_id', '=', 'b.room_id')
+            ->leftJoin('department as dep', 'dep.department_id', '=', 'r.department_id')
+            ->leftJoin('room_assignment as ra', fn ($join) => $join->on('ra.bed_id', '=', 'b.bed_id')->where('ra.status', 'active'))
+            ->leftJoin('patient as p', 'p.patient_id', '=', 'ra.patient_id')
+            ->when($q !== '', function ($query) use ($q) {
+                $like = '%' . $q . '%';
+                $query->where(function ($sub) use ($like) {
+                    $sub->where('b.bed_id', 'ilike', $like)
+                        ->orWhere('r.room_number', 'ilike', $like);
+                });
+            })
+            ->when($status, fn ($query) => $query->where('b.status', $status))
+            ->orderBy('r.floor_number')->orderBy('r.room_number')->orderBy('b.bed_number')
+            ->selectRaw("b.*, r.room_number, r.room_type, dep.department_name,
+                         ra.room_assignment_id, ra.patient_id, ra.assigned_at, (p.first_name||' '||p.last_name) as patient_name")
+            ->paginate((int) $request->query('per_page', 20), ['*'], 'page', (int) $request->query('page', 1));
+
+        return response()->json([
+            'data' => $beds->items(),
+            'meta' => [
+                'current_page' => $beds->currentPage(),
+                'last_page'    => $beds->lastPage(),
+                'total'        => $beds->total(),
+                'per_page'     => $beds->perPage(),
+            ],
+        ]);
+    }
+
+    /** Backs the "Room Assignments" tab on the Room & Bed Management page — all assignments, across all patients. */
+    public function allAssignments(Request $request): JsonResponse
+    {
+        $status = $request->query('status', 'active');
+
+        $assignments = DB::table('room_assignment as ra')
+            ->join('patient as p', 'p.patient_id', '=', 'ra.patient_id')
+            ->join('room as r', 'r.room_id', '=', 'ra.room_id')
+            ->leftJoin('bed as b', 'b.bed_id', '=', 'ra.bed_id')
+            ->leftJoin('staff as s', 's.staff_id', '=', 'ra.assigned_by')
+            ->when($status !== 'all', fn ($query) => $query->where('ra.status', $status))
+            ->orderByDesc('ra.assigned_at')
+            ->selectRaw("ra.*, (p.first_name||' '||p.last_name) as patient_name, r.room_number, b.bed_number,
+                         (s.first_name||' '||s.last_name) as assigned_by_name")
+            ->paginate((int) $request->query('per_page', 20), ['*'], 'page', (int) $request->query('page', 1));
+
+        return response()->json([
+            'data' => $assignments->items(),
+            'meta' => [
+                'current_page' => $assignments->currentPage(),
+                'last_page'    => $assignments->lastPage(),
+                'total'        => $assignments->total(),
+                'per_page'     => $assignments->perPage(),
+            ],
+        ]);
     }
 
     public function bedsForRoom(string $roomId): JsonResponse

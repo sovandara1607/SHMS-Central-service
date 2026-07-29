@@ -20,6 +20,7 @@ class LabApiController extends Controller
     public function index(Request $request): JsonResponse
     {
         $status = $request->query('status', '');
+        $q = trim((string) $request->query('q', ''));
 
         $orders = DB::table('lab_test_order as o')
             ->join('patient as p', 'p.patient_id', '=', 'o.patient_id')
@@ -27,7 +28,15 @@ class LabApiController extends Controller
             ->join('staff as s', 's.staff_id', '=', 'd.staff_id')
             ->leftJoin('lab_technician as t', 't.technician_id', '=', 'o.technician_id')
             ->leftJoin('staff as ts', 'ts.staff_id', '=', 't.staff_id')
-            ->when($status !== '', fn ($q) => $q->where('o.status', $status))
+            ->when($q !== '', function ($query) use ($q) {
+                $like = '%' . $q . '%';
+                $query->where(function ($sub) use ($like) {
+                    $sub->where('o.test_order_id', 'ilike', $like)
+                        ->orWhereRaw("(p.first_name||' '||p.last_name) ilike ?", [$like])
+                        ->orWhere('o.test_name', 'ilike', $like);
+                });
+            })
+            ->when($status !== '', fn ($query) => $query->where('o.status', $status))
             ->orderByDesc('o.order_date')
             ->selectRaw("o.*, (p.first_name||' '||p.last_name) as patient_name, (s.first_name||' '||s.last_name) as doctor_name, (ts.first_name||' '||ts.last_name) as technician_name")
             ->paginate((int) $request->query('orders_per_page', 20), ['*'], 'orders_page', (int) $request->query('orders_page', 1));
@@ -95,10 +104,7 @@ class LabApiController extends Controller
 
     public function storeOrder(StoreLabOrderRequest $request): JsonResponse
     {
-        $data = $request->validated();
-        unset($data['priority'], $data['notes']);
-
-        $order = LabTestOrder::create($data);
+        $order = LabTestOrder::create($request->validated());
 
         return response()->json($order->fresh(), 201);
     }

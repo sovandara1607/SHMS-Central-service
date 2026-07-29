@@ -6,6 +6,7 @@ use App\Http\Requests\DispenseRequest;
 use App\Http\Requests\StoreMedicineBatchRequest;
 use App\Http\Requests\StoreMedicineRequest;
 use App\Http\Requests\UpdateMedicineBatchRequest;
+use App\Http\Requests\UpdateMedicineRequest;
 use App\Models\DispensingItem;
 use App\Models\DispensingRecord;
 use App\Models\Medicine;
@@ -56,7 +57,11 @@ class PharmacyApiController extends Controller
             'total'   => Medicine::count(),
             'available' => Medicine::where('status', 'available')->count(),
             'low_stock' => Medicine::where('stock_quantity', '<=', 20)->count(),
-            'expired_batches' => MedicineBatch::where('status', 'expired')->count(),
+            // By actual expiry_date, not `status` — nothing in this codebase ever
+            // auto-flips a batch's status to 'expired' once its date passes (it's
+            // a manual dropdown in the edit form), so counting by status alone
+            // silently undercounts real expired stock sitting on the shelf.
+            'expired_batches' => MedicineBatch::where('expiry_date', '<', now()->toDateString())->count(),
         ];
 
         return response()->json([
@@ -79,6 +84,27 @@ class PharmacyApiController extends Controller
     public function listAllMedicines(): JsonResponse
     {
         return response()->json(Medicine::orderBy('medicine_name')->get());
+    }
+
+    public function showMedicine(string $id): JsonResponse
+    {
+        $medicine = Medicine::find($id);
+        if (! $medicine) {
+            return response()->json(['message' => 'Medicine not found'], 404);
+        }
+
+        return response()->json($medicine);
+    }
+
+    public function updateMedicine(UpdateMedicineRequest $request, string $id): JsonResponse
+    {
+        $medicine = Medicine::find($id);
+        if (! $medicine) {
+            return response()->json(['message' => 'Medicine not found'], 404);
+        }
+        $medicine->update($request->validated());
+
+        return response()->json($medicine->fresh());
     }
 
     public function listBatches(): JsonResponse
@@ -250,22 +276,53 @@ class PharmacyApiController extends Controller
                         throw new \RuntimeException("Insufficient stock for {$med->medicine_name}.");
                     }
 
-                    // FEFO: earliest-expiry valid batch with enough quantity.
-                    $batch = DB::table('medicine_batch')
+                    // FEFO across as many valid, non-expired batches as it takes to
+                    // cover the quantity — a single batch is the common case, but
+                    // stock is often split (e.g. two batches of 25 when 30 are
+                    // needed), and requiring one batch to hold the whole amount
+                    // silently desynced batch quantities from stock_quantity: no
+                    // batch matched, batch_id came back null, and stock_quantity
+                    // still dropped while every batch's own quantity stayed put.
+                    // status='valid' alone isn't enough to exclude expired stock —
+                    // nothing in this codebase ever flips it automatically once
+                    // expiry_date passes (it's a manual dropdown), so a batch can
+                    // sit 'valid' long after it's actually expired. Filtering on
+                    // the real date directly closes that gap regardless of
+                    // whether status was ever updated.
+                    $batches = DB::table('medicine_batch')
                         ->where('medicine_id', $med->medicine_id)->where('status', 'valid')
-                        ->where('quantity', '>=', $qty)
-                        ->orderBy('expiry_date')->first();
+                        ->where('expiry_date', '>=', now()->toDateString())
+                        ->where('quantity', '>', 0)
+                        ->orderBy('expiry_date')
+                        ->lockForUpdate()
+                        ->get();
 
-                    DispensingItem::create([
-                        'dispensing_id' => $disp->dispensing_id,
-                        'medicine_id' => $med->medicine_id,
-                        'batch_id' => $batch?->batch_id,
-                        'quantity_dispensed' => $qty,
-                    ]);
-                    $med->decrement('stock_quantity', $qty);
-                    if ($batch) {
-                        DB::table('medicine_batch')->where('batch_id', $batch->batch_id)->decrement('quantity', $qty);
+                    $remaining = $qty;
+                    foreach ($batches as $batch) {
+                        if ($remaining <= 0) {
+                            break;
+                        }
+                        $take = min($remaining, $batch->quantity);
+                        DispensingItem::create([
+                            'dispensing_id' => $disp->dispensing_id,
+                            'medicine_id' => $med->medicine_id,
+                            'batch_id' => $batch->batch_id,
+                            'quantity_dispensed' => $take,
+                        ]);
+                        DB::table('medicine_batch')->where('batch_id', $batch->batch_id)->decrement('quantity', $take);
+                        $remaining -= $take;
                     }
+                    // Whatever no tracked batch could cover (untracked/aggregate-only
+                    // stock) is recorded batch-less, same fallback as before.
+                    if ($remaining > 0) {
+                        DispensingItem::create([
+                            'dispensing_id' => $disp->dispensing_id,
+                            'medicine_id' => $med->medicine_id,
+                            'batch_id' => null,
+                            'quantity_dispensed' => $remaining,
+                        ]);
+                    }
+                    $med->decrement('stock_quantity', $qty);
                 }
 
                 return $disp->dispensing_id;

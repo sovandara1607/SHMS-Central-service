@@ -17,9 +17,10 @@ class StoreRoomRequest extends FormRequest
         return [
             'department_id' => 'nullable|exists:department,department_id',
             'room_number'   => 'nullable|string|max:100',
-            'room_type'     => 'nullable|in:general,private,icu,emergency',
+            'room_type'     => 'nullable|in:general,private,icu,emergency,operating_room',
             'floor_number'  => 'nullable|integer',
             'status'        => 'nullable|in:available,occupied,maintenance',
+            'rate_per_day'  => 'nullable|numeric',
         ];
     }
 }

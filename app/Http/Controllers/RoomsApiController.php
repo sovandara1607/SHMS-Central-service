@@ -19,9 +19,9 @@ class RoomsApiController extends Controller
             ->leftJoin('department as dep', 'dep.department_id', '=', 'r.department_id')
             ->leftJoin('bed as b', 'b.room_id', '=', 'r.room_id')
             ->when($q !== '', fn ($query) => $query->where('r.room_id', 'ilike', "%$q%")->orWhere('r.room_number', 'ilike', "%$q%"))
-            ->groupBy('r.room_id', 'r.room_number', 'r.room_type', 'r.floor_number', 'dep.department_name', 'r.status')
+            ->groupBy('r.room_id', 'r.room_number', 'r.room_type', 'r.floor_number', 'dep.department_name', 'r.status', 'r.rate_per_day')
             ->orderBy('r.floor_number')->orderBy('r.room_number')
-            ->selectRaw("r.room_id, r.room_number, r.room_type, r.floor_number, dep.department_name,
+            ->selectRaw("r.room_id, r.room_number, r.room_type, r.floor_number, dep.department_name, r.rate_per_day,
                          count(b.bed_id) as bed_count, count(*) filter (where b.status='available') as beds_available, r.status")
             ->paginate((int) $request->query('per_page', 20), ['*'], 'page', (int) $request->query('page', 1));
 
@@ -32,6 +32,12 @@ class RoomsApiController extends Controller
                 'last_page'    => $rooms->lastPage(),
                 'total'        => $rooms->total(),
                 'per_page'     => $rooms->perPage(),
+            ],
+            'stats' => [
+                'total_rooms'        => DB::table('room')->count(),
+                'total_beds'         => DB::table('bed')->count(),
+                'available_beds'     => DB::table('bed')->where('status', 'available')->count(),
+                'active_assignments' => DB::table('room_assignment')->where('status', 'active')->count(),
             ],
         ]);
     }

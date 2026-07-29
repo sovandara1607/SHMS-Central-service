@@ -19,7 +19,7 @@ class StoreLabOrderRequest extends FormRequest
             'doctor_id'      => 'required|exists:doctor,doctor_id',
             'technician_id'  => 'nullable|exists:lab_technician,technician_id',
             'test_name'      => 'required|string|max:100',
-            'priority'       => 'nullable|string',
+            'priority'       => 'nullable|in:routine,urgent,stat',
             'notes'          => 'nullable|string',
         ];
     }

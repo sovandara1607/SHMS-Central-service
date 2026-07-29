@@ -23,20 +23,32 @@ class AppointmentsApiController extends Controller
             ->join('patient as p', 'p.patient_id', '=', 'a.patient_id')
             ->join('doctor as d', 'd.doctor_id', '=', 'a.doctor_id')
             ->join('staff as s', 's.staff_id', '=', 'd.staff_id')
+            ->leftJoin('staff as bs', 'bs.staff_id', '=', 'a.booked_by')
             ->when($q !== '', function ($query) use ($q) {
                 $like = '%' . $q . '%';
-                $query->where('a.appointment_id', 'ilike', $like)
-                    ->orWhereRaw("(p.first_name || ' ' || p.last_name) ilike ?", [$like])
-                    ->orWhereRaw("(s.first_name || ' ' || s.last_name) ilike ?", [$like]);
+                $query->where(function ($sub) use ($like) {
+                    $sub->where('a.appointment_id', 'ilike', $like)
+                        ->orWhereRaw("(p.first_name || ' ' || p.last_name) ilike ?", [$like])
+                        ->orWhereRaw("(s.first_name || ' ' || s.last_name) ilike ?", [$like]);
+                });
             })
             ->when($date, fn ($query) => $query->where('a.appointment_date', $date))
             ->when($status !== 'all', fn ($query) => $query->where('a.status', $status))
             ->when($patientId, fn ($query) => $query->where('a.patient_id', $patientId))
             ->orderByDesc('a.appointment_date')->orderByDesc('a.appointment_time')
-            ->selectRaw("a.*, (p.first_name||' '||p.last_name) as patient_name, p.patient_id as patient_id, (s.first_name||' '||s.last_name) as doctor_name")
+            ->selectRaw("a.*, (p.first_name||' '||p.last_name) as patient_name, p.patient_id as patient_id, (s.first_name||' '||s.last_name) as doctor_name, (bs.first_name||' '||bs.last_name) as booked_by_name")
             ->paginate($perPage);
 
         $today = now()->toDateString();
+        $month = $request->query('month', now()->format('Y-m'));
+        $monthStart = $month . '-01';
+        $monthEnd = date('Y-m-t', strtotime($monthStart));
+
+        $calendar = DB::table('appointment')
+            ->whereBetween('appointment_date', [$monthStart, $monthEnd])
+            ->selectRaw('appointment_date, COUNT(*) as count')
+            ->groupBy('appointment_date')
+            ->pluck('count', 'appointment_date');
 
         return response()->json([
             'data' => $appointments->items(),
@@ -52,6 +64,7 @@ class AppointmentsApiController extends Controller
                 'scheduled' => Appointment::where('status', 'scheduled')->count(),
                 'cancelled' => Appointment::where('status', 'cancelled')->count(),
             ],
+            'calendar' => $calendar,
         ]);
     }
 
@@ -97,6 +110,26 @@ class AppointmentsApiController extends Controller
             'status' => 'cancelled',
             'cancellation_reason' => $request->input('cancellation_reason', 'Cancelled by staff'),
         ]);
+
+        return response()->json($this->present($model->fresh(['patient', 'doctor.staff', 'bookedByStaff'])));
+    }
+
+    public function complete(string $appointment): JsonResponse
+    {
+        $model = Appointment::findOrFail($appointment);
+
+        // A single conditional UPDATE instead of check-then-act: the status
+        // guard lives in the WHERE clause, so the database serializes
+        // concurrent completions on the same row and only one can ever
+        // match — no race between a double-click (or two staff members)
+        // both reading 'scheduled' before either write lands.
+        $updated = Appointment::where('appointment_id', $appointment)
+            ->where('status', 'scheduled')
+            ->update(['status' => 'completed']);
+
+        if ($updated === 0) {
+            return response()->json(['message' => 'Only a scheduled appointment can be marked completed.'], 409);
+        }
 
         return response()->json($this->present($model->fresh(['patient', 'doctor.staff', 'bookedByStaff'])));
     }
