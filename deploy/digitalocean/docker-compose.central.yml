@@ -21,12 +21,12 @@ services:
       DB_USERNAME: ${POSTGRES_USER:-smart_hospital}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.digitalocean}
 
-      MONGODB_URI: mongodb://${MONGO_USER:-smart_hospital}:${MONGO_PASSWORD}@${MONGO_HOST:?set MONGO_HOST in .env.digitalocean}:27017/?authSource=admin
+      MONGODB_URI: mongodb://${MONGO_USER:-smart_hospital}:${MONGO_PASSWORD:?set MONGO_PASSWORD in .env.digitalocean}@${MONGO_HOST:?set MONGO_HOST in .env.digitalocean}:27017/?authSource=admin
       MONGODB_DATABASE: smart_hospital_docs
 
       REDIS_CLIENT: phpredis
       REDIS_HOST: ${REDIS_HOST:?set REDIS_HOST in .env.digitalocean}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env.digitalocean}
       REDIS_PORT: 6379
       REDIS_BUS_DB: 2
 
