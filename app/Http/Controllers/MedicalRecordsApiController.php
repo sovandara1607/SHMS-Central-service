@@ -152,7 +152,7 @@ class MedicalRecordsApiController extends Controller
             ])->values(),
             'reports' => $record->reports->map(fn ($r) => $r->only([
                 'report_id', 'medical_record_id', 'patient_id', 'report_type',
-                'report_content', 'generated_by', 'generated_at',
+                'report_content', 'generated_by', 'generated_at', 'report_file_path',
             ]))->values(),
             'procedures' => $record->procedures->map(fn ($p) => $p->only([
                 'procedure_id', 'medical_record_id', 'patient_id', 'doctor_id',
