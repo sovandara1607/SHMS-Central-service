@@ -37,6 +37,8 @@ Route::middleware('central-service.key')->group(function () {
     Route::post('patients/{id}/nurse-assignments', [PatientAssignmentsApiController::class, 'storeNurse']);
     Route::post('nurse-assignments/{id}/end', [PatientAssignmentsApiController::class, 'endNurse']);
 
+    Route::get('appointments/booked-slots', [AppointmentsApiController::class, 'bookedSlots']);
+    Route::get('appointments/search', [AppointmentsApiController::class, 'search']);
     Route::apiResource('appointments', AppointmentsApiController::class)->except(['destroy']);
     Route::post('appointments/{id}/cancel', [AppointmentsApiController::class, 'cancel']);
     Route::post('appointments/{id}/complete', [AppointmentsApiController::class, 'complete']);
@@ -48,6 +50,8 @@ Route::middleware('central-service.key')->group(function () {
     Route::post('medical-records/{id}/procedures', [MedicalProceduresApiController::class, 'store']);
     Route::post('medical-records/{id}/vital-signs', [VitalSignsApiController::class, 'storeForRecord']);
     Route::get('medical-reports', [MedicalReportsApiController::class, 'index']);
+    Route::get('medical-reports/{reportId}/status', [MedicalReportsApiController::class, 'status']);
+    Route::post('medical-reports/{reportId}/regenerate', [MedicalReportsApiController::class, 'regenerate']);
 
     Route::get('vital-signs', [VitalSignsApiController::class, 'index']);
     Route::post('vital-signs', [VitalSignsApiController::class, 'store']);

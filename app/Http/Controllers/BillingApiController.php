@@ -71,12 +71,35 @@ class BillingApiController extends Controller
 
     public function store(StoreBillRequest $request): JsonResponse
     {
-        $bill = Bill::create([
-            'patient_id' => $request->validated('patient_id'),
-            'generated_by' => $request->input('generated_by'),
-        ]);
+        $data = $request->validated();
 
-        return response()->json($this->present($bill->load('items', 'payments', 'patient')), 201);
+        $bill = DB::transaction(function () use ($data, $request) {
+            $bill = Bill::create([
+                'patient_id' => $data['patient_id'],
+                'appointment_id' => $data['appointment_id'] ?? null,
+                'generated_by' => $request->input('generated_by'),
+            ]);
+
+            foreach ($data['items'] ?? [] as $item) {
+                BillItem::create([
+                    'bill_item_id' => 'BI' . strtoupper(Str::random(8)),
+                    'bill_id' => $bill->bill_id,
+                    'item_type' => $item['item_type'],
+                    'description' => $item['description'] ?? null,
+                    'quantity' => $item['quantity'],
+                    'unit_price' => $item['unit_price'],
+                ]);
+            }
+
+            if (! empty($data['items'])) {
+                $bill->recomputeTotal();
+                $bill->recomputeStatus();
+            }
+
+            return $bill;
+        });
+
+        return response()->json($this->present($bill->fresh(['items', 'payments', 'patient'])), 201);
     }
 
     public function addItem(StoreBillItemRequest $request, string $id): JsonResponse

@@ -113,16 +113,13 @@ class PatientsApiController extends Controller
     }
 
     /**
-     * The patient's demographic/clinical-narrative fields are never
-     * overwritten (same "original preserved" policy as medical_record) —
-     * submitted values are appended to patient_adjustment as an audit trail
-     * instead. `patient_status` is the one exception: it drives live
-     * application state elsewhere (dashboard ICU/critical counts, status
-     * filters and badges throughout the app), the same way discharge()
-     * already updates it directly rather than just logging it — so it's
-     * applied to the row here too, for consistency with that. Insurance is
-     * also an exception: it's a separate, period-based sub-resource, so it
-     * still applies normally.
+     * Every submitted field is applied directly to the live patient row —
+     * the row always reflects the latest edit. Each adjustment is also
+     * logged to patient_adjustment as a point-in-time snapshot of what was
+     * submitted, so the full edit history stays visible even though the
+     * row itself is now mutable (this replaced an earlier "log only, never
+     * overwrite" policy). Insurance remains a separate, period-based
+     * sub-resource and applies the same way it always has.
      */
     public function adjust(AdjustPatientRequest $request, string $patient): JsonResponse
     {
@@ -137,8 +134,8 @@ class PatientsApiController extends Controller
             'reason' => $data['reason'],
         ]);
 
-        if (! empty($data['patient_status'])) {
-            $model->update(['patient_status' => $data['patient_status']]);
+        if (! empty($patientData)) {
+            $model->update($patientData);
         }
 
         if ($insuranceData['insurance_provider'] ?? null) {

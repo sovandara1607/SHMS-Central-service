@@ -134,6 +134,53 @@ class AppointmentsApiController extends Controller
         return response()->json($this->present($model->fresh(['patient', 'doctor.staff', 'bookedByStaff'])));
     }
 
+    /** Already-booked times for a doctor on a date, so the create form can hint before submit (slotTaken() below remains the authoritative check). */
+    public function bookedSlots(Request $request): JsonResponse
+    {
+        $doctorId = $request->query('doctor_id');
+        $date = $request->query('date');
+        if (! $doctorId || ! $date) {
+            return response()->json([]);
+        }
+
+        $times = Appointment::where('doctor_id', $doctorId)
+            ->where('appointment_date', $date)
+            ->where('status', 'scheduled')
+            ->orderBy('appointment_time')
+            ->pluck('appointment_time')
+            ->map(fn ($t) => substr((string) $t, 0, 5))
+            ->values();
+
+        return response()->json($times);
+    }
+
+    public function search(Request $request): JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+        if ($q === '') {
+            return response()->json([]);
+        }
+
+        $like = '%' . $q . '%';
+        $appointments = DB::table('appointment as a')
+            ->join('patient as p', 'p.patient_id', '=', 'a.patient_id')
+            ->join('doctor as d', 'd.doctor_id', '=', 'a.doctor_id')
+            ->join('staff as s', 's.staff_id', '=', 'd.staff_id')
+            ->where(function ($sub) use ($like) {
+                $sub->where('a.appointment_id', 'ilike', $like)
+                    ->orWhereRaw("(p.first_name || ' ' || p.last_name) ilike ?", [$like]);
+            })
+            ->orderByDesc('a.appointment_date')->orderByDesc('a.appointment_time')
+            ->limit(20)
+            ->selectRaw("a.appointment_id, a.appointment_date, a.appointment_time, (p.first_name||' '||p.last_name) as patient_name, (s.first_name||' '||s.last_name) as doctor_name")
+            ->get();
+
+        return response()->json($appointments->map(fn ($a) => [
+            'id' => $a->appointment_id,
+            'label' => $a->appointment_id . ' — ' . $a->patient_name . ' with Dr. ' . $a->doctor_name . ', ' . $a->appointment_date . ' ' . substr($a->appointment_time, 0, 5),
+        ]));
+    }
+
     private function slotTaken(string $doctorId, string $date, string $time, ?string $exceptId = null): bool
     {
         return Appointment::where('doctor_id', $doctorId)
