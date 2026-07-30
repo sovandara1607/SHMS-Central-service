@@ -50,6 +50,16 @@ class AppointmentsApiController extends Controller
             ->groupBy('appointment_date')
             ->pluck('count', 'appointment_date');
 
+        // One scan of `appointment` with per-bucket FILTERs instead of 4
+        // separate count() queries (see analysis.md §4.8).
+        $stats = DB::table('appointment')->selectRaw(
+            'count(*) filter (where appointment_date = ?) as today,
+             count(*) filter (where appointment_date between ? and ?) as this_week,
+             count(*) filter (where status = ?) as scheduled,
+             count(*) filter (where status = ?) as cancelled',
+            [$today, now()->startOfWeek()->toDateString(), now()->endOfWeek()->toDateString(), 'scheduled', 'cancelled']
+        )->first();
+
         return response()->json([
             'data' => $appointments->items(),
             'meta' => [
@@ -59,10 +69,10 @@ class AppointmentsApiController extends Controller
                 'per_page'     => $appointments->perPage(),
             ],
             'stats' => [
-                'today'     => Appointment::where('appointment_date', $today)->count(),
-                'this_week' => Appointment::whereBetween('appointment_date', [now()->startOfWeek()->toDateString(), now()->endOfWeek()->toDateString()])->count(),
-                'scheduled' => Appointment::where('status', 'scheduled')->count(),
-                'cancelled' => Appointment::where('status', 'cancelled')->count(),
+                'today'     => (int) $stats->today,
+                'this_week' => (int) $stats->this_week,
+                'scheduled' => (int) $stats->scheduled,
+                'cancelled' => (int) $stats->cancelled,
             ],
             'calendar' => $calendar,
         ]);

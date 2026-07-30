@@ -47,7 +47,18 @@ class MedicalReportsApiController extends Controller
             'generated_by' => $request->input('generated_by'),
         ]);
 
-        GenerateMedicalReportDocumentJob::dispatch($report->report_id);
+        // The report row above is always committed synchronously; PDF
+        // rendering is normally offloaded to the queue. If Redis is down,
+        // dispatch() throws before anything is queued, so fall back to
+        // generating the PDF inline (same call regenerate() makes manually)
+        // rather than returning a report stuck with no file and nothing
+        // that will ever retry it.
+        try {
+            GenerateMedicalReportDocumentJob::dispatch($report->report_id);
+        } catch (\RedisException $e) {
+            report($e);
+            (new GenerateMedicalReportDocumentJob($report->report_id))->handle();
+        }
 
         return response()->json($this->present($report->load('patient')), 201);
     }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreStaffShiftRequest;
 use App\Http\Requests\UpdateStaffShiftRequest;
 use App\Models\StaffShift;
+use App\Support\DropdownCache;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,7 +16,10 @@ class StaffShiftsApiController extends Controller
     /** Backs the nurse-assignment shift dropdown on the patient detail modal. */
     public function index(): JsonResponse
     {
-        return response()->json(StaffShift::orderByDesc('shift_date')->limit(50)->get());
+        return response()->json(DropdownCache::remember(
+            'recent-shifts',
+            fn () => StaffShift::orderByDesc('shift_date')->limit(50)->get()
+        ));
     }
 
     /** Backs the flat, paginated "Schedule Management" list page. */
@@ -32,6 +36,15 @@ class StaffShiftsApiController extends Controller
             ->selectRaw("sh.*, (s.first_name||' '||s.last_name) as staff_name")
             ->paginate((int) $request->query('per_page', 20), ['*'], 'page', (int) $request->query('page', 1));
 
+        // One scan of `staff_shift` with per-bucket FILTERs instead of 4
+        // separate count() queries (see analysis.md §4.8).
+        $stats = DB::table('staff_shift')->selectRaw(
+            "count(*) filter (where status = 'scheduled') as scheduled,
+             count(*) filter (where status = 'completed') as completed,
+             count(*) filter (where status = 'on_leave') as on_leave,
+             count(*) filter (where status = 'cancelled') as cancelled"
+        )->first();
+
         return response()->json([
             'data' => $shifts->items(),
             'meta' => [
@@ -41,10 +54,10 @@ class StaffShiftsApiController extends Controller
                 'per_page'     => $shifts->perPage(),
             ],
             'stats' => [
-                'scheduled' => DB::table('staff_shift')->where('status', 'scheduled')->count(),
-                'completed' => DB::table('staff_shift')->where('status', 'completed')->count(),
-                'on_leave'  => DB::table('staff_shift')->where('status', 'on_leave')->count(),
-                'cancelled' => DB::table('staff_shift')->where('status', 'cancelled')->count(),
+                'scheduled' => (int) $stats->scheduled,
+                'completed' => (int) $stats->completed,
+                'on_leave'  => (int) $stats->on_leave,
+                'cancelled' => (int) $stats->cancelled,
             ],
         ]);
     }

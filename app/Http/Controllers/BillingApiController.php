@@ -19,14 +19,21 @@ class BillingApiController extends Controller
         $status = $request->query('status', 'all');
         $patientId = $request->query('patient_id');
 
+        // paid_amount as a correlated scalar subquery instead of a
+        // LEFT JOIN + 9-column GROUP BY (analysis.md §4.10/scalability-plan
+        // §5.1) — same pattern already used for item_count right below it.
+        // Mathematically identical result (SUM of that bill's payments,
+        // 0 if none), but the main paginated query no longer has to join
+        // and group every row against `payment` just to compute one sum;
+        // Postgres can index-scan the subquery per row instead
+        // (payment.bill_id is indexed — see 2026_07_30_000002).
         $bills = DB::table('bill as b')
             ->join('patient as p', 'p.patient_id', '=', 'b.patient_id')
-            ->leftJoin('payment as pm', 'pm.bill_id', '=', 'b.bill_id')
             ->when($status !== 'all', fn ($q) => $q->where('b.status', $status))
             ->when($patientId, fn ($q) => $q->where('b.patient_id', $patientId))
-            ->groupBy('b.bill_id', 'b.patient_id', 'b.appointment_id', 'b.generated_by', 'b.bill_date', 'b.total_amount', 'b.status', 'p.first_name', 'p.last_name')
             ->orderByDesc('b.bill_date')
-            ->selectRaw("b.*, (p.first_name||' '||p.last_name) as patient_name, COALESCE(SUM(pm.amount_paid), 0) as paid_amount,
+            ->selectRaw("b.*, (p.first_name||' '||p.last_name) as patient_name,
+                         (SELECT COALESCE(SUM(amount_paid), 0) FROM payment WHERE payment.bill_id = b.bill_id) as paid_amount,
                          (SELECT COUNT(*) FROM bill_item WHERE bill_item.bill_id = b.bill_id) as item_count")
             ->paginate((int) $request->query('bills_per_page', 20), ['*'], 'bills_page', (int) $request->query('bills_page', 1));
 
@@ -43,13 +50,24 @@ class BillingApiController extends Controller
             ->selectRaw('COALESCE(SUM(b.total_amount - COALESCE(pm.paid, 0)), 0) as pending')
             ->value('pending');
 
+        // total_amount/unpaid/partially_paid/paid all scan `bill` — one
+        // query with FILTERs instead of 4 (see analysis.md §4.8).
+        // total_revenue scans the separate `payment` table, so it stays its
+        // own query; pending_amount above is already a single query.
+        $billStats = DB::table('bill')->selectRaw(
+            "coalesce(sum(total_amount), 0) as total_amount,
+             count(*) filter (where status = 'unpaid') as unpaid,
+             count(*) filter (where status = 'partially_paid') as partially_paid,
+             count(*) filter (where status = 'paid') as paid"
+        )->first();
+
         $stats = [
-            'total_amount'    => (float) Bill::sum('total_amount'),
+            'total_amount'    => (float) $billStats->total_amount,
             'total_revenue'   => (float) Payment::sum('amount_paid'),
             'pending_amount'  => $pendingAmount,
-            'unpaid'          => Bill::where('status', 'unpaid')->count(),
-            'partially_paid'  => Bill::where('status', 'partially_paid')->count(),
-            'paid'            => Bill::where('status', 'paid')->count(),
+            'unpaid'          => (int) $billStats->unpaid,
+            'partially_paid'  => (int) $billStats->partially_paid,
+            'paid'            => (int) $billStats->paid,
         ];
 
         return response()->json([

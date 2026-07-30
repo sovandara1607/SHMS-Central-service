@@ -30,9 +30,17 @@ class Bill extends Model
         return $this->hasMany(Payment::class, 'bill_id', 'bill_id');
     }
 
+    /**
+     * Sums the in-memory collection when `payments` is already
+     * eager-loaded (BillingApiController::present() loads it right before
+     * calling this) instead of re-querying — mathematically identical
+     * result either way, since it's summing the same underlying rows.
+     */
     public function paidAmount(): float
     {
-        return (float) $this->payments()->sum('amount_paid');
+        return (float) ($this->relationLoaded('payments')
+            ? $this->payments->sum('amount_paid')
+            : $this->payments()->sum('amount_paid'));
     }
 
     public function recomputeTotal(): void

@@ -58,21 +58,26 @@ class LabApiController extends Controller
             ->selectRaw("lr.*, o.test_name, (p.first_name||' '||p.last_name) as patient_name, (s.first_name||' '||s.last_name) as generated_by_name")
             ->paginate((int) $request->query('reports_per_page', 20), ['*'], 'reports_page', (int) $request->query('reports_page', 1));
 
+        // One scan of `lab_test_order` with per-bucket FILTERs instead of 4
+        // separate count() queries (see analysis.md §4.8) — a FILTER clause
+        // accepts any boolean expression, including the NOT EXISTS check
+        // pending_results needs (kept as NOT EXISTS rather than
+        // whereNotIn(...pluck()), which blows past Postgres's
+        // 65535-bound-parameter limit at scale).
+        $stats = DB::table('lab_test_order as o')->selectRaw(
+            "count(*) filter (where o.status = 'pending') as pending,
+             count(*) filter (where o.status = 'in_progress') as in_progress,
+             count(*) filter (where o.status = 'completed') as completed,
+             count(*) filter (where o.status = 'completed' and not exists (
+                 select 1 from lab_test_result r where r.test_order_id = o.test_order_id
+             )) as pending_results"
+        )->first();
+
         $stats = [
-            'pending'     => LabTestOrder::where('status', 'pending')->count(),
-            'in_progress' => LabTestOrder::where('status', 'in_progress')->count(),
-            'completed'   => LabTestOrder::where('status', 'completed')->count(),
-            // NOT EXISTS instead of whereNotIn(...pluck()): at scale, pluck()
-            // inlines every lab_test_result id as a bound parameter and blows
-            // past Postgres's 65535-parameter-per-statement limit.
-            'pending_results' => DB::table('lab_test_order as o')
-                ->where('o.status', 'completed')
-                ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('lab_test_result as r')
-                        ->whereColumn('r.test_order_id', 'o.test_order_id');
-                })
-                ->count(),
+            'pending'     => (int) $stats->pending,
+            'in_progress' => (int) $stats->in_progress,
+            'completed'   => (int) $stats->completed,
+            'pending_results' => (int) $stats->pending_results,
         ];
 
         return response()->json([
@@ -183,7 +188,12 @@ class LabApiController extends Controller
             'entered_by' => $request->input('entered_by'),
         ]);
 
-        LabTestOrder::where('test_order_id', $data['test_order_id'])->update(['status' => 'completed']);
+        // Fetched once and reused for both the update and patient_id below,
+        // instead of two independent WHERE-filtered round trips against the
+        // same row (which also meant a missing order would silently create
+        // a LabReport with patient_id=null rather than failing loudly).
+        $order = LabTestOrder::where('test_order_id', $data['test_order_id'])->firstOrFail();
+        $order->update(['status' => 'completed']);
 
         // The report row itself is created synchronously (Postgres stays the
         // immediately-consistent source of truth for the Lab Reports tab).
@@ -192,7 +202,7 @@ class LabApiController extends Controller
         // using the lab_report_id returned here.
         $labReport = LabReport::create([
             'test_order_id' => $data['test_order_id'],
-            'patient_id' => LabTestOrder::where('test_order_id', $data['test_order_id'])->value('patient_id'),
+            'patient_id' => $order->patient_id,
             'report_content' => $data['result_value'] . ($data['remarks'] ? " — {$data['remarks']}" : ''),
             'generated_by' => $request->input('generated_by'),
         ]);

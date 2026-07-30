@@ -11,6 +11,7 @@ use App\Models\DispensingItem;
 use App\Models\DispensingRecord;
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
+use App\Support\DropdownCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -53,10 +54,18 @@ class PharmacyApiController extends Controller
             ->selectRaw("dr.*, (p.first_name||' '||p.last_name) as patient_name, (s.first_name||' '||s.last_name) as pharmacist_name")
             ->paginate((int) $request->query('dispensing_per_page', 20), ['*'], 'dispensing_page', (int) $request->query('dispensing_page', 1));
 
+        // total/available/low_stock all scan `medicine` — one query with
+        // FILTERs instead of 3 (see analysis.md §4.8).
+        $medicineStats = DB::table('medicine')->selectRaw(
+            "count(*) as total,
+             count(*) filter (where status = 'available') as available,
+             count(*) filter (where stock_quantity <= 20) as low_stock"
+        )->first();
+
         $stats = [
-            'total'   => Medicine::count(),
-            'available' => Medicine::where('status', 'available')->count(),
-            'low_stock' => Medicine::where('stock_quantity', '<=', 20)->count(),
+            'total'   => (int) $medicineStats->total,
+            'available' => (int) $medicineStats->available,
+            'low_stock' => (int) $medicineStats->low_stock,
             // By actual expiry_date, not `status` — nothing in this codebase ever
             // auto-flips a batch's status to 'expired' once its date passes (it's
             // a manual dropdown in the edit form), so counting by status alone
@@ -83,7 +92,7 @@ class PharmacyApiController extends Controller
     /** Unpaginated list, for dropdowns (batch form, dispensing form). */
     public function listAllMedicines(): JsonResponse
     {
-        return response()->json(Medicine::orderBy('medicine_name')->get());
+        return response()->json(DropdownCache::remember('medicines', fn () => Medicine::orderBy('medicine_name')->get()));
     }
 
     public function showMedicine(string $id): JsonResponse
@@ -114,12 +123,11 @@ class PharmacyApiController extends Controller
             ->orderBy('b.expiry_date')
             ->selectRaw('b.*, m.medicine_name')->get();
 
-        $expiring = DB::table('medicine_batch as b')
-            ->join('medicine as m', 'm.medicine_id', '=', 'b.medicine_id')
-            ->whereRaw("b.expiry_date <= (CURRENT_DATE + interval '30 day')")
-            ->where('b.status', 'valid')
-            ->orderBy('b.expiry_date')
-            ->selectRaw('b.*, m.medicine_name')->get();
+        // Derived from $batches in PHP instead of a second identical join —
+        // $batches already carries every column this filter needs
+        // (expiry_date, status), so there's nothing the DB round trip adds.
+        $expiryCutoff = now()->addDays(30)->toDateString();
+        $expiring = $batches->filter(fn ($b) => $b->status === 'valid' && $b->expiry_date !== null && $b->expiry_date <= $expiryCutoff)->values();
 
         return response()->json(['batches' => $batches, 'expiring' => $expiring]);
     }
@@ -167,7 +175,7 @@ class PharmacyApiController extends Controller
             ->selectRaw("pr.prescription_id, pr.patient_id, (p.first_name||' '||p.last_name) as patient_name")
             ->limit(100)->get();
 
-        $medicines = Medicine::orderBy('medicine_name')->get();
+        $medicines = DropdownCache::remember('medicines', fn () => Medicine::orderBy('medicine_name')->get());
 
         return response()->json([
             'records' => $this->paginated($records),
