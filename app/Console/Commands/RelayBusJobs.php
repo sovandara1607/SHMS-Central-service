@@ -56,7 +56,13 @@ class RelayBusJobs extends Command
         $message = json_decode($raw, associative: true);
 
         if (! is_array($message) || ! isset($message['type'], $message['payload']) || ! is_array($message['payload'])) {
-            Log::warning('central-service.bus: malformed message, skipping', ['raw' => $raw]);
+            // Never log the raw payload — bus messages carry PHI (clinical
+            // snapshots, patient identifiers). Log enough to correlate
+            // repeated bad messages without writing patient data to disk.
+            Log::warning('central-service.bus: malformed message, skipping', [
+                'length' => strlen($raw),
+                'preview_hash' => substr(hash('sha256', $raw), 0, 12),
+            ]);
 
             return;
         }

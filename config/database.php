@@ -170,6 +170,11 @@ return [
             'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
             'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
             'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
+            // Fail fast rather than block indefinitely (phpredis treats an
+            // unset timeout as 0 = wait forever) — this connection backs the
+            // queue that bus:relay and queue:work depend on.
+            'timeout' => env('REDIS_CONNECT_TIMEOUT', 0.25),
+            'read_timeout' => env('REDIS_READ_TIMEOUT', 0.25),
         ],
 
         'cache' => [
@@ -183,6 +188,8 @@ return [
             'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
             'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
             'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
+            'timeout' => env('REDIS_CONNECT_TIMEOUT', 0.25),
+            'read_timeout' => env('REDIS_READ_TIMEOUT', 0.25),
         ],
 
         // Shared handoff point with the Application Server (Database-final).
@@ -197,6 +204,12 @@ return [
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_BUS_DB', '2'),
             'prefix' => '',
+            // bus:relay's blpop() blocks for up to 5s at the Redis-protocol
+            // level while polling an empty queue — the socket read_timeout
+            // must stay above that or every idle poll would error out, so
+            // this uses its own env var rather than sharing REDIS_READ_TIMEOUT.
+            'timeout' => env('REDIS_CONNECT_TIMEOUT', 0.25),
+            'read_timeout' => env('REDIS_BUS_READ_TIMEOUT', 6),
         ],
 
     ],
