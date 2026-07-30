@@ -1,0 +1,26 @@
+# Copy to /etc/systemd/system/central-service-bus-relay.service on
+# centralservice-api-server, then:
+#   systemctl daemon-reload
+#   systemctl enable --now central-service-bus-relay
+#
+# Replaces supervisord's [program:bus-relay] (see central-service's
+# docker/supervisord.conf) 1:1 — same command, same "restart no matter
+# what, indefinitely" intent (supervisord's startretries=100 becomes
+# systemd's StartLimitIntervalSec=0, i.e. no cap on retry count).
+
+[Unit]
+Description=central-service bus:relay (drains the shared Redis bus)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/central-service
+ExecStart=/usr/bin/php artisan bus:relay
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

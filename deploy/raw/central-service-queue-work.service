@@ -1,0 +1,24 @@
+# Copy to /etc/systemd/system/central-service-queue-work.service on
+# centralservice-api-server, then:
+#   systemctl daemon-reload
+#   systemctl enable --now central-service-queue-work
+#
+# Replaces supervisord's [program:queue-work] 1:1 — same command
+# (--tries=3 --sleep=1), same always-restart intent.
+
+[Unit]
+Description=central-service queue:work (processes jobs bus:relay dispatches)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/central-service
+ExecStart=/usr/bin/php artisan queue:work --tries=3 --sleep=1
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
