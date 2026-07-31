@@ -173,8 +173,11 @@ class PatientsApiController extends Controller
             'start_date'         => $data['policy_start'] ?? null,
             'end_date'           => $data['policy_end'] ?? null,
         ];
+        if (! empty($data['insurance_status'])) {
+            $insurance['status'] = $data['insurance_status'];
+        }
 
-        $patient = collect($data)->except(['insurance_provider', 'policy_number', 'coverage_details', 'policy_start', 'policy_end', 'reason'])->all();
+        $patient = collect($data)->except(['insurance_provider', 'policy_number', 'coverage_details', 'policy_start', 'policy_end', 'insurance_status', 'reason'])->all();
         if (empty($patient['patient_status'])) {
             unset($patient['patient_status']);
         }
@@ -193,7 +196,7 @@ class PatientsApiController extends Controller
             ]),
             'insurance' => $patient->insurance->map(fn (PatientInsurance $ins) => $ins->only([
                 'insurance_id', 'patient_id', 'insurance_provider', 'policy_number',
-                'coverage_details', 'start_date', 'end_date',
+                'coverage_details', 'start_date', 'end_date', 'status',
             ]))->values(),
             'doctor_assignments' => $patient->doctorAssignments->map(fn ($da) => [
                 'assignment_id' => $da->assignment_id,

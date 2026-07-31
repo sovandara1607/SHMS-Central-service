@@ -17,6 +17,7 @@ class StoreBillRequest extends FormRequest
         return [
             'patient_id'     => 'required|exists:patient,patient_id',
             'appointment_id' => 'nullable|exists:appointment,appointment_id',
+            'medical_record_id' => 'nullable|exists:medical_record,medical_record_id',
             'items'                    => 'nullable|array',
             'items.*.item_type'        => 'required_with:items|in:service,medicine,lab_test,procedure,room',
             'items.*.description'      => 'nullable|string|max:255',

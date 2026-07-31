@@ -43,6 +43,7 @@ Route::middleware('central-service.key')->group(function () {
     Route::post('appointments/{id}/cancel', [AppointmentsApiController::class, 'cancel']);
     Route::post('appointments/{id}/complete', [AppointmentsApiController::class, 'complete']);
 
+    Route::get('medical-records/search', [MedicalRecordsApiController::class, 'search']);
     Route::apiResource('medical-records', MedicalRecordsApiController::class)->only(['index', 'store', 'show']);
     Route::post('medical-records/{id}/adjust', [MedicalRecordsApiController::class, 'adjust']);
     Route::post('medical-records/{id}/prescriptions', [PrescriptionsApiController::class, 'store']);

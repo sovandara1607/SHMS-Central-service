@@ -95,6 +95,7 @@ class BillingApiController extends Controller
             $bill = Bill::create([
                 'patient_id' => $data['patient_id'],
                 'appointment_id' => $data['appointment_id'] ?? null,
+                'medical_record_id' => $data['medical_record_id'] ?? null,
                 'generated_by' => $request->input('generated_by'),
             ]);
 
@@ -178,7 +179,7 @@ class BillingApiController extends Controller
         $paid = $bill->paidAmount();
 
         return [
-            ...$bill->only(['bill_id', 'patient_id', 'appointment_id', 'generated_by', 'bill_date', 'total_amount', 'status']),
+            ...$bill->only(['bill_id', 'patient_id', 'appointment_id', 'medical_record_id', 'generated_by', 'bill_date', 'total_amount', 'status']),
             'patient' => $bill->patient?->only(['patient_id', 'first_name', 'last_name', 'date_of_birth']),
             'items' => $bill->items->map(fn (BillItem $i) => $i->only([
                 'bill_item_id', 'bill_id', 'item_type', 'description', 'quantity', 'unit_price', 'subtotal',

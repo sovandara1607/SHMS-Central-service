@@ -25,6 +25,11 @@ class MedicalRecord extends Model
         return $this->belongsTo(Doctor::class, 'doctor_id', 'doctor_id');
     }
 
+    public function createdBy()
+    {
+        return $this->belongsTo(Staff::class, 'created_by', 'staff_id');
+    }
+
     public function adjustments()
     {
         return $this->hasMany(MedicalRecordAdjustment::class, 'medical_record_id', 'medical_record_id');

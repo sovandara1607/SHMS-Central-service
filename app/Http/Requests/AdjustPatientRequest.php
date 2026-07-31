@@ -36,6 +36,7 @@ class AdjustPatientRequest extends FormRequest
             'coverage_details'   => 'nullable|string',
             'policy_start'       => 'nullable|date',
             'policy_end'         => 'nullable|date',
+            'insurance_status'   => 'nullable|in:active,expired,cancelled',
             'reason' => 'required|string',
         ];
     }

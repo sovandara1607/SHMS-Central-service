@@ -55,10 +55,39 @@ class MedicalRecordsApiController extends Controller
         ]);
     }
 
+    public function search(Request $request): JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+        if ($q === '') {
+            return response()->json([]);
+        }
+
+        // Label is deliberately non-clinical (ID, patient, date only) — this
+        // picker is reachable from the billing flow (see bill.create's
+        // gate on the Database-final route), which has no business seeing
+        // diagnosis/symptom text just to pick which visit to bill against.
+        $like = '%' . $q . '%';
+        $records = DB::table('medical_record as mr')
+            ->join('patient as p', 'p.patient_id', '=', 'mr.patient_id')
+            ->where(function ($sub) use ($like) {
+                $sub->where('mr.medical_record_id', 'ilike', $like)
+                    ->orWhereRaw("(p.first_name || ' ' || p.last_name) ilike ?", [$like]);
+            })
+            ->orderByDesc('mr.created_at')
+            ->limit(20)
+            ->selectRaw("mr.medical_record_id, mr.created_at, (p.first_name||' '||p.last_name) as patient_name")
+            ->get();
+
+        return response()->json($records->map(fn ($r) => [
+            'id' => $r->medical_record_id,
+            'label' => $r->medical_record_id . ' — ' . $r->patient_name . ', ' . \Carbon\Carbon::parse($r->created_at)->format('Y-m-d'),
+        ]));
+    }
+
     public function show(string $medicalRecord): JsonResponse
     {
         $record = MedicalRecord::with([
-            'patient', 'doctor.staff',
+            'patient', 'doctor.staff', 'createdBy',
             'adjustments' => fn ($q) => $q->orderByDesc('adjusted_at'),
             'prescriptions' => fn ($q) => $q->with('items.medicine')->orderByDesc('prescription_date'),
             'reports' => fn ($q) => $q->orderByDesc('generated_at'),
@@ -103,7 +132,7 @@ class MedicalRecordsApiController extends Controller
         }
 
         return response()->json($this->present($record->load(
-            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
+            'patient', 'doctor.staff', 'createdBy', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
         )), 201);
     }
 
@@ -124,7 +153,7 @@ class MedicalRecordsApiController extends Controller
         ]);
 
         return response()->json($this->present($record->fresh(
-            'patient', 'doctor.staff', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
+            'patient', 'doctor.staff', 'createdBy', 'adjustments', 'prescriptions.items.medicine', 'reports', 'procedures'
         )));
     }
 
@@ -139,6 +168,7 @@ class MedicalRecordsApiController extends Controller
                 'patient_id', 'first_name', 'last_name', 'date_of_birth', 'gender', 'phone_number',
             ]),
             'doctor_name' => $record->doctor?->name(),
+            'created_by_name' => $record->createdBy?->fullName(),
             'adjustments' => $record->adjustments->map(fn ($a) => $a->only([
                 'adjustment_id', 'medical_record_id', 'symptoms', 'diagnosis',
                 'treatment_notes', 'adjusted_by', 'adjusted_at', 'reason',
