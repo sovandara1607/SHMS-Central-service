@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreVitalSignForRecordRequest;
 use App\Http\Requests\StoreVitalSignRequest;
 use App\Models\MedicalRecord;
 use App\Models\VitalSign;
@@ -48,7 +49,7 @@ class VitalSignsApiController extends Controller
      * able to attach a vital sign to the wrong patient by tampering with
      * the request.
      */
-    public function storeForRecord(StoreVitalSignRequest $request, string $recordId): JsonResponse
+    public function storeForRecord(StoreVitalSignForRecordRequest $request, string $recordId): JsonResponse
     {
         $record = MedicalRecord::findOrFail($recordId);
         $data = $request->validated();
